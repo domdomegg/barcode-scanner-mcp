@@ -1,3 +1,13 @@
-export const sum = (a: number, b: number): number => a + b;
+import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
+import {registerAll} from './tools/index.js';
 
-export const multiply = (a: number, b: number): number => a * b;
+export function createServer(): McpServer {
+	const server = new McpServer({
+		name: 'barcode-scanner-mcp',
+		version: '1.0.0',
+	});
+
+	registerAll(server);
+
+	return server;
+}
