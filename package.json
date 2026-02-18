@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "~1.24.0",
-    "@zxing/library": "^0.21.3",
+    "@undecaf/zbar-wasm": "^0.11.0",
     "bwip-js": "^4.5.1",
     "express": "^5.0.0",
     "sharp": "^0.33.5",

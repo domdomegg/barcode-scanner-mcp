@@ -1,31 +1,24 @@
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import sharp from 'sharp';
-import {
-	MultiFormatReader,
-	BarcodeFormat,
-	DecodeHintType,
-	RGBLuminanceSource,
-	BinaryBitmap,
-	HybridBinarizer,
-} from '@zxing/library';
+import {scanGrayBuffer} from '@undecaf/zbar-wasm';
 import {jsonResult} from '../utils/response.js';
 import {strictSchemaWithAliases} from '../utils/schema.js';
 
-const formatHints: Record<string, BarcodeFormat[]> = {
-	qr: [BarcodeFormat.QR_CODE],
-	ean13: [BarcodeFormat.EAN_13],
-	ean8: [BarcodeFormat.EAN_8],
-	upca: [BarcodeFormat.UPC_A],
-	upce: [BarcodeFormat.UPC_E],
-	code128: [BarcodeFormat.CODE_128],
-	code39: [BarcodeFormat.CODE_39],
-	code93: [BarcodeFormat.CODE_93],
-	itf: [BarcodeFormat.ITF],
-	codabar: [BarcodeFormat.CODABAR],
-	datamatrix: [BarcodeFormat.DATA_MATRIX],
-	aztec: [BarcodeFormat.AZTEC],
-	pdf417: [BarcodeFormat.PDF_417],
+const zbarFormatMap: Record<string, string> = {
+	ZBAR_QRCODE: 'QR_CODE',
+	ZBAR_EAN13: 'EAN_13',
+	ZBAR_EAN8: 'EAN_8',
+	ZBAR_UPCA: 'UPC_A',
+	ZBAR_UPCE: 'UPC_E',
+	ZBAR_CODE128: 'CODE_128',
+	ZBAR_CODE39: 'CODE_39',
+	ZBAR_CODE93: 'CODE_93',
+	ZBAR_I25: 'ITF',
+	ZBAR_CODABAR: 'CODABAR',
+	ZBAR_PDF417: 'PDF_417',
+	ZBAR_ISBN10: 'ISBN_10',
+	ZBAR_ISBN13: 'ISBN_13',
 };
 
 const inputSchema = strictSchemaWithAliases(
@@ -42,8 +35,6 @@ const inputSchema = strictSchemaWithAliases(
 			'code93',
 			'itf',
 			'codabar',
-			'datamatrix',
-			'aztec',
 			'pdf417',
 		]).optional().describe('Expected barcode format. If omitted, all formats are tried.'),
 	},
@@ -55,29 +46,40 @@ const outputSchema = z.object({
 	text: z.string().describe('Decoded text content'),
 });
 
-async function loadImage(image: string): Promise<{data: Buffer; width: number; height: number}> {
-	const {data, info} = await sharp(Buffer.from(image, 'base64'))
-		.flatten({background: {r: 255, g: 255, b: 255}})
-		.ensureAlpha()
+type PreprocessFn = (s: sharp.Sharp) => sharp.Sharp;
+
+const preprocessingPipeline: PreprocessFn[] = [
+	// 1. Raw greyscale — fast path for clean images
+	s => s,
+	// 2. Greyscale + normalise
+	s => s.normalise(),
+	// 3. Greyscale + median filter + normalise — reduces noise (e.g. screen moiré)
+	s => s.median(3).normalise(),
+	// 4. Greyscale + normalise + threshold
+	s => s.normalise().threshold(128),
+	// 5. Resize to 800px wide + greyscale + normalise — reduces moiré from high-res photos
+	s => s.resize(800).normalise(),
+	// 6. Resize + median + normalise
+	s => s.resize(800).median(3).normalise(),
+	// 7. Larger resize + median + normalise
+	s => s.resize(1000).median(3).normalise(),
+	// 8. Sharpen + normalise
+	s => s.sharpen({sigma: 2}).normalise(),
+	// 9. Blur to smooth moiré + normalise
+	s => s.blur(1.5).normalise(),
+];
+
+async function tryDecode(imageBuffer: Buffer, preprocess: PreprocessFn) {
+	const {data, info} = await preprocess(
+		sharp(imageBuffer)
+			.flatten({background: {r: 255, g: 255, b: 255}})
+			.greyscale(),
+	)
 		.raw()
 		.toBuffer({resolveWithObject: true});
 
-	return {data, width: info.width, height: info.height};
-}
-
-function rgbaToArgbInt32(data: Buffer, width: number, height: number): Int32Array {
-	const pixels = new Int32Array(width * height);
-	for (let i = 0; i < pixels.length; i++) {
-		const offset = i * 4;
-		const r = data[offset]!;
-		const g = data[offset + 1]!;
-		const b = data[offset + 2]!;
-		const a = data[offset + 3]!;
-		// eslint-disable-next-line no-bitwise
-		pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
-	}
-
-	return pixels;
+	const arrayBuffer = new Uint8Array(data).buffer as ArrayBuffer;
+	return scanGrayBuffer(arrayBuffer, info.width, info.height);
 }
 
 export function registerDecodeImage(server: McpServer): void {
@@ -85,7 +87,7 @@ export function registerDecodeImage(server: McpServer): void {
 		'decode_image',
 		{
 			title: 'Decode barcode/QR code',
-			description: 'Decode a barcode or QR code from a base64-encoded image. Supports QR, EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, ITF, Codabar, Data Matrix, Aztec, and PDF 417.',
+			description: 'Decode a barcode or QR code from a base64-encoded image. Supports QR, EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, ITF, Codabar, and PDF 417. Handles noisy real-world photos by trying multiple preprocessing approaches.',
 			inputSchema,
 			outputSchema,
 			annotations: {
@@ -93,28 +95,25 @@ export function registerDecodeImage(server: McpServer): void {
 			},
 		},
 		async (args) => {
-			const {data, width, height} = await loadImage(args.image);
-			const pixels = rgbaToArgbInt32(data, width, height);
+			const imageBuffer = Buffer.from(args.image, 'base64');
 
-			const hints = new Map<DecodeHintType, unknown>();
-			if (args.format_hint && formatHints[args.format_hint]) {
-				hints.set(DecodeHintType.POSSIBLE_FORMATS, formatHints[args.format_hint]);
+			for (const preprocess of preprocessingPipeline) {
+				try {
+					const symbols = await tryDecode(imageBuffer, preprocess);
+					if (symbols.length > 0) {
+						const symbol = symbols[0]!;
+						const format = zbarFormatMap[symbol.typeName] ?? symbol.typeName;
+						return jsonResult(outputSchema.parse({
+							format,
+							text: symbol.decode(),
+						}));
+					}
+				} catch {
+					// Preprocessing or scan failed, try next approach
+				}
 			}
 
-			hints.set(DecodeHintType.TRY_HARDER, true);
-
-			const reader = new MultiFormatReader();
-			reader.setHints(hints);
-
-			const luminanceSource = new RGBLuminanceSource(pixels, width, height);
-			const binaryBitmap = new BinaryBitmap(new HybridBinarizer(luminanceSource));
-
-			const result = reader.decode(binaryBitmap);
-
-			return jsonResult(outputSchema.parse({
-				format: BarcodeFormat[result.getBarcodeFormat()],
-				text: result.getText(),
-			}));
+			throw new Error('No barcode or QR code found in image after trying multiple preprocessing approaches');
 		},
 	);
 }
