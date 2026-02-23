@@ -50,35 +50,33 @@ type PreprocessFn = (s: sharp.Sharp) => sharp.Sharp;
 
 const preprocessingPipeline: PreprocessFn[] = [
 	// 1. Raw greyscale — fast path for clean images
-	s => s,
+	(s) => s,
 	// 2. Greyscale + normalise
-	s => s.normalise(),
+	(s) => s.normalise(),
 	// 3. Greyscale + median filter + normalise — reduces noise (e.g. screen moiré)
-	s => s.median(3).normalise(),
+	(s) => s.median(3).normalise(),
 	// 4. Greyscale + normalise + threshold
-	s => s.normalise().threshold(128),
+	(s) => s.normalise().threshold(128),
 	// 5. Resize to 800px wide + greyscale + normalise — reduces moiré from high-res photos
-	s => s.resize(800).normalise(),
+	(s) => s.resize(800).normalise(),
 	// 6. Resize + median + normalise
-	s => s.resize(800).median(3).normalise(),
+	(s) => s.resize(800).median(3).normalise(),
 	// 7. Larger resize + median + normalise
-	s => s.resize(1000).median(3).normalise(),
+	(s) => s.resize(1000).median(3).normalise(),
 	// 8. Sharpen + normalise
-	s => s.sharpen({sigma: 2}).normalise(),
+	(s) => s.sharpen({sigma: 2}).normalise(),
 	// 9. Blur to smooth moiré + normalise
-	s => s.blur(1.5).normalise(),
+	(s) => s.blur(1.5).normalise(),
 ];
 
 async function tryDecode(imageBuffer: Buffer, preprocess: PreprocessFn) {
-	const {data, info} = await preprocess(
-		sharp(imageBuffer)
-			.flatten({background: {r: 255, g: 255, b: 255}})
-			.greyscale(),
-	)
+	const {data, info} = await preprocess(sharp(imageBuffer)
+		.flatten({background: {r: 255, g: 255, b: 255}})
+		.greyscale())
 		.raw()
 		.toBuffer({resolveWithObject: true});
 
-	const arrayBuffer = new Uint8Array(data).buffer as ArrayBuffer;
+	const arrayBuffer = new Uint8Array(data).buffer;
 	return scanGrayBuffer(arrayBuffer, info.width, info.height);
 }
 
@@ -99,6 +97,7 @@ export function registerDecodeImage(server: McpServer): void {
 
 			for (const preprocess of preprocessingPipeline) {
 				try {
+					// eslint-disable-next-line no-await-in-loop
 					const symbols = await tryDecode(imageBuffer, preprocess);
 					if (symbols.length > 0) {
 						const symbol = symbols[0]!;
