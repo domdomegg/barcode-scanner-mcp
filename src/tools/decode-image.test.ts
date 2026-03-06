@@ -1,6 +1,17 @@
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {describe, it, expect} from 'vitest';
 import bwipjs from 'bwip-js';
 import {callWithValidation, getRegisteredTool} from './_test-utils.js';
+
+const fixturesDir = join(import.meta.dirname, 'test-fixtures');
+
+type DecodeResult = {structuredContent: {codes: {format: string; text: string}[]}};
+
+function expectCode(result: DecodeResult, format: string, text: string) {
+	const match = result.structuredContent.codes.find((c) => c.format === format && c.text === text);
+	expect(match, `Expected code ${format}:${text} in ${JSON.stringify(result.structuredContent.codes)}`).toBeTruthy();
+}
 
 describe('decode_image', () => {
 	it('decodes a QR code from base64 PNG', async () => {
@@ -15,10 +26,9 @@ describe('decode_image', () => {
 		const {meta, handler} = getRegisteredTool('decode_image');
 		const result = await callWithValidation(meta.inputSchema, handler, {
 			image: base64,
-		}) as {structuredContent: {format: string; text: string}};
+		}) as DecodeResult;
 
-		expect(result.structuredContent.text).toBe('Hello World');
-		expect(result.structuredContent.format).toBe('QR_CODE');
+		expectCode(result, 'QR_CODE', 'Hello World');
 	});
 
 	it('decodes a Code 128 barcode from base64 PNG', async () => {
@@ -33,10 +43,9 @@ describe('decode_image', () => {
 		const {meta, handler} = getRegisteredTool('decode_image');
 		const result = await callWithValidation(meta.inputSchema, handler, {
 			image: base64,
-		}) as {structuredContent: {format: string; text: string}};
+		}) as DecodeResult;
 
-		expect(result.structuredContent.text).toBe('Test123');
-		expect(result.structuredContent.format).toBe('CODE_128');
+		expectCode(result, 'CODE_128', 'Test123');
 	});
 
 	it('decodes with format hint', async () => {
@@ -51,9 +60,9 @@ describe('decode_image', () => {
 		const result = await callWithValidation(meta.inputSchema, handler, {
 			image: base64,
 			format_hint: 'qr',
-		}) as {structuredContent: {format: string; text: string}};
+		}) as DecodeResult;
 
-		expect(result.structuredContent.text).toBe('with hint');
+		expectCode(result, 'QR_CODE', 'with hint');
 	});
 
 	it('throws on undecodable image', async () => {
@@ -70,5 +79,28 @@ describe('decode_image', () => {
 		await expect(callWithValidation(meta.inputSchema, handler, {
 			image: base64,
 		})).rejects.toThrow();
+	});
+
+	it('decodes EAN-13 and QR code from a real-world photo (arla yogurt)', async () => {
+		const base64 = readFileSync(join(fixturesDir, 'arla-yogurt-back.jpg')).toString('base64');
+
+		const {meta, handler} = getRegisteredTool('decode_image');
+		const result = await callWithValidation(meta.inputSchema, handler, {
+			image: base64,
+		}) as DecodeResult;
+
+		expectCode(result, 'EAN_13', '8718166007635');
+		expectCode(result, 'QR_CODE', 'http://qr.arla.com/sustainability');
+	});
+
+	it('decodes EAN-8 from a real-world photo (chicken slices)', async () => {
+		const base64 = readFileSync(join(fixturesDir, 'chicken-slices-back.jpg')).toString('base64');
+
+		const {meta, handler} = getRegisteredTool('decode_image');
+		const result = await callWithValidation(meta.inputSchema, handler, {
+			image: base64,
+		}) as DecodeResult;
+
+		expectCode(result, 'EAN_8', '00285131');
 	});
 });

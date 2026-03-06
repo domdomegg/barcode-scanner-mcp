@@ -14,10 +14,10 @@ describe('e2e: generate then decode', () => {
 
 		const decodeResult = await callWithValidation(decode.meta.inputSchema, decode.handler, {
 			image: base64Png,
-		}) as {structuredContent: {format: string; text: string}};
+		}) as {structuredContent: {codes: {format: string; text: string}[]}};
 
-		expect(decodeResult.structuredContent.format).toBe('QR_CODE');
-		expect(decodeResult.structuredContent.text).toBe('https://example.com/hello');
+		expect(decodeResult.structuredContent.codes[0]!.format).toBe('QR_CODE');
+		expect(decodeResult.structuredContent.codes[0]!.text).toBe('https://example.com/hello');
 	});
 
 	it('generates a Code 128 barcode and decodes it back', async () => {
@@ -33,9 +33,9 @@ describe('e2e: generate then decode', () => {
 
 		const decodeResult = await callWithValidation(decode.meta.inputSchema, decode.handler, {
 			image: base64Png,
-		}) as {structuredContent: {format: string; text: string}};
+		}) as {structuredContent: {codes: {format: string; text: string}[]}};
 
-		expect(decodeResult.structuredContent.format).toBe('CODE_128');
-		expect(decodeResult.structuredContent.text).toBe('ABC-12345');
+		expect(decodeResult.structuredContent.codes[0]!.format).toBe('CODE_128');
+		expect(decodeResult.structuredContent.codes[0]!.text).toBe('ABC-12345');
 	});
 });

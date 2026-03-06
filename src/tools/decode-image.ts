@@ -41,9 +41,13 @@ const inputSchema = strictSchemaWithAliases(
 	{},
 );
 
-const outputSchema = z.object({
+const codeSchema = z.object({
 	format: z.string().describe('Detected barcode format (e.g. QR_CODE, EAN_13)'),
 	text: z.string().describe('Decoded text content'),
+});
+
+const outputSchema = z.object({
+	codes: z.array(codeSchema).describe('All barcodes/QR codes found in the image'),
 });
 
 type PreprocessFn = (s: sharp.Sharp) => sharp.Sharp;
@@ -85,7 +89,7 @@ export function registerDecodeImage(server: McpServer): void {
 		'decode_image',
 		{
 			title: 'Decode barcode/QR code',
-			description: 'Decode a barcode or QR code from a base64-encoded image. Supports QR, EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, ITF, Codabar, and PDF 417. Handles noisy real-world photos by trying multiple preprocessing approaches.',
+			description: 'Decode barcodes and QR codes from a base64-encoded image. Returns all codes found. Supports QR, EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, ITF, Codabar, and PDF 417. Handles noisy real-world photos by trying multiple preprocessing approaches.',
 			inputSchema,
 			outputSchema,
 			annotations: {
@@ -94,25 +98,32 @@ export function registerDecodeImage(server: McpServer): void {
 		},
 		async (args) => {
 			const imageBuffer = Buffer.from(args.image, 'base64');
+			const seen = new Set<string>();
+			const codes: {format: string; text: string}[] = [];
 
 			for (const preprocess of preprocessingPipeline) {
 				try {
 					// eslint-disable-next-line no-await-in-loop
 					const symbols = await tryDecode(imageBuffer, preprocess);
-					if (symbols.length > 0) {
-						const symbol = symbols[0]!;
+					for (const symbol of symbols) {
 						const format = zbarFormatMap[symbol.typeName] ?? symbol.typeName;
-						return jsonResult(outputSchema.parse({
-							format,
-							text: symbol.decode(),
-						}));
+						const text = symbol.decode();
+						const key = `${format}:${text}`;
+						if (!seen.has(key)) {
+							seen.add(key);
+							codes.push({format, text});
+						}
 					}
 				} catch {
 					// Preprocessing or scan failed, try next approach
 				}
 			}
 
-			throw new Error('No barcode or QR code found in image after trying multiple preprocessing approaches');
+			if (codes.length === 0) {
+				throw new Error('No barcode or QR code found in image after trying multiple preprocessing approaches');
+			}
+
+			return jsonResult(outputSchema.parse({codes}));
 		},
 	);
 }
