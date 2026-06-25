@@ -14,19 +14,7 @@ MCP server for scanning and generating barcodes and QR codes.
 
 ## Setup
 
-```bash
-claude mcp add barcode-scanner-mcp -- npx -y barcode-scanner-mcp
-```
-
-Or with HTTP transport:
-
-```bash
-# Start the server
-MCP_TRANSPORT=http PORT=3000 npx -y barcode-scanner-mcp
-
-# Add to Claude
-claude mcp add --transport http barcode-scanner-mcp http://localhost:3000/mcp
-```
+Follow the instructions on [install-mcp](https://adamjones.me/install-mcp/?config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJhcmNvZGUtc2Nhbm5lci1tY3AiXSwibmFtZSI6ImJhcmNvZGUtc2Nhbm5lciJ9), which generates the right config for your MCP client (Claude Code, Claude Desktop, Cursor, Cline, VS Code, and more).
 
 ## Tools
 
